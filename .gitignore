@@ -2,3 +2,5 @@
 /.vscode
 *.cache
 *.code-workspace
+/tests/opencl/atomics/
+/tests/opencl/op_binary/
