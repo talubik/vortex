@@ -5,7 +5,7 @@ PROJECT := copybuf
 
 SRC_DIR := $(VORTEX_HOME)/tests/opencl/$(PROJECT)
 
-SRCS := $(SRC_DIR)/main.cpp
+SRCS := $(SRC_DIR)/main.cc
 
 
 include ../common.mk
