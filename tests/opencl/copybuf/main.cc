@@ -9,7 +9,7 @@ int main() {
   err = clGetPlatformIDs(0, NULL, &num_platforms);
   if (err != CL_SUCCESS || num_platforms == 0) {
     fprintf(stderr, "No OpenCL platform\n");
-    return 1;
+    return -1;
   }
   cl_platform_id *platforms = (cl_platform_id *)malloc(sizeof(cl_platform_id) * num_platforms);
   clGetPlatformIDs(num_platforms, platforms, NULL);
@@ -18,35 +18,43 @@ int main() {
   if (err != CL_SUCCESS || num_devices == 0) {
     fprintf(stderr, "No OpenCL device\n");
     free(platforms);
-    return 2;
+    return -1;
   }
   cl_device_id *devices = (cl_device_id *)malloc(sizeof(cl_device_id) * num_devices);
   clGetDeviceIDs(platforms[0], CL_DEVICE_TYPE_ALL, num_devices, devices, NULL);
   cl_context context = clCreateContext(NULL, 1, &devices[0], NULL, NULL, &err);
   if (err != CL_SUCCESS) {
     fprintf(stderr, "Failed to create context\n");
-    return 3;
+    return -1;
   }
   cl_command_queue queue = clCreateCommandQueue(context, devices[0], 0, &err);
   if (err != CL_SUCCESS) {
     fprintf(stderr, "Failed to create queue\n");
-    return 4;
+    return -1;
   }
   int src[] = {10, 20, 30, 40, 50};
   int dst[5] = {0};
-  cl_mem bufSrc = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
-                                 sizeof(src), src, &err);
-  cl_mem bufDst = clCreateBuffer(context, CL_MEM_WRITE_ONLY,
+  cl_mem bufSrc = clCreateBuffer(context, 0 ,
+                                 sizeof(src), NULL, &err);
+  if(err!= CL_SUCCESS){
+    fprintf(stderr, "Failed to create buffer\n");
+    return -1;
+  }
+  cl_mem bufDst = clCreateBuffer(context, 0,
                                  sizeof(dst), NULL, &err);
+  if (err != CL_SUCCESS) {
+    fprintf(stderr, "Failed to create buffer\n");
+    return -1;
+  }
   err = clEnqueueCopyBuffer(queue, bufSrc, bufDst, 0, 0, sizeof(src), 0, NULL, NULL);
   if (err != CL_SUCCESS) {
     fprintf(stderr, "Failed to copy buffer\n");
-    return 5;
+    return -1;
   }
   err = clEnqueueReadBuffer(queue, bufDst, CL_TRUE, 0, sizeof(dst), dst, 0, NULL, NULL);
   if (err != CL_SUCCESS) {
     fprintf(stderr, "Failed to read buffer\n");
-    return 6;
+    return -1;
   }
 
   printf("Source Buffer: ");

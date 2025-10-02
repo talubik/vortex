@@ -46,6 +46,7 @@ run-simx:
 	$(MAKE) -C blackscholes run-simx
 	$(MAKE) -C bfs run-simx
 	$(MAKE) -C copybuf run-simx
+	$(MAKE) -C op_binary run-simx
 
 run-rtlsim:
 	$(MAKE) -C vecadd run-rtlsim
@@ -68,6 +69,7 @@ run-rtlsim:
 	$(MAKE) -C blackscholes run-rtlsim
 	$(MAKE) -C bfs run-rtlsim
 	$(MAKE) -C copybuf run-rtlsim
+	$(MAKE) -C op_binary run-rtlsim
 
 clean:
 	$(MAKE) -C vecadd clean
