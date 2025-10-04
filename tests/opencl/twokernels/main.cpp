@@ -6,8 +6,6 @@
 #include <iostream>
 #include <vector>
 
-
-
 const char *kernelSrcAdd = R"CLC(
 __kernel void pair_add(__global const int* in, __global int* out) {
     int gid = get_global_id(0);
@@ -16,7 +14,6 @@ __kernel void pair_add(__global const int* in, __global int* out) {
 }
 )CLC";
 
-
 const char *kernelSrcMul = R"CLC(
 __kernel void pair_mul(__global const int* in, __global int* out) {
     int gid = get_global_id(0);
@@ -24,7 +21,6 @@ __kernel void pair_mul(__global const int* in, __global int* out) {
     out[gid] = in[i]* in[i + 1];
 }
 )CLC";
-
 
 std::vector<int> runPairAdd(cl::Context &context, cl::CommandQueue &queue,
                             const std::vector<int> &input) {
@@ -43,7 +39,7 @@ std::vector<int> runPairAdd(cl::Context &context, cl::CommandQueue &queue,
               << std::endl;
     return {};
   }
-  
+
   cl::Kernel kernel(program, "pair_add");
   kernel.setArg(0, bufIn);
   kernel.setArg(1, bufOut);
@@ -77,7 +73,7 @@ std::vector<int> runPairMul(cl::Context &context, cl::CommandQueue &queue,
   kernel.setArg(0, bufIn);
   kernel.setArg(1, bufOut);
   queue.enqueueNDRangeKernel(kernel, cl::NullRange,
-                                                                       cl::NDRange(outN), cl::NullRange);
+                             cl::NDRange(outN), cl::NullRange);
   queue.enqueueReadBuffer(bufOut, CL_TRUE, 0, sizeof(int) * outN, output.data());
   queue.finish();
   return output;
@@ -92,7 +88,7 @@ int main() {
   }
 
   std::vector<cl::Device> devices;
-  
+
   platforms[0].getDevices(CL_DEVICE_TYPE_ALL, &devices);
   if (devices.empty()) {
     std::cerr << "No OpenCL devices\n";
@@ -105,10 +101,6 @@ int main() {
   std::vector<int> input = {1, 2, 3, 4, 5, 6, 7, 8};
   auto resultAdd = runPairAdd(context, queue, input);
   auto resultMul = runPairMul(context, queue, input);
-  
-  
-  
-  
 
   std::cout << "Input: ";
   for (auto v : input)
@@ -120,7 +112,6 @@ int main() {
   for (auto v : resultMul)
     std::cout << v << " ";
   std::cout << std::endl;
-
 
   return 0;
 }
