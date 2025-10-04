@@ -52,6 +52,7 @@ CXXFLAGS += -std=c++17 -Wall -Wextra -Wfatal-errors
 CXXFLAGS += -Wno-deprecated-declarations -Wno-unused-parameter -Wno-narrowing
 CXXFLAGS += -pthread
 CXXFLAGS += -I$(POCL_PATH)/include
+CXXFLAGS += -I$(POCL_PATH)/include/hpp
 CXXFLAGS += $(CONFIGS)
 
 POCL_CC_FLAGS += LLVM_PREFIX=$(LLVM_VORTEX) POCL_VORTEX_BINTOOL="$(VX_BINTOOL)" POCL_VORTEX_CFLAGS="$(VX_CFLAGS)" POCL_VORTEX_LDFLAGS="$(VX_LDFLAGS)"

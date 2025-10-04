@@ -19,8 +19,6 @@ import subprocess
 import struct
 import sys
 import re
-import shutil
-from datetime import datetime
 
 def get_vma_size(elf_file):
     try:
@@ -72,15 +70,7 @@ def create_vxbin_binary(input_elf, output_bin, objcopy_path):
         bin_file.write(min_vma_bytes)
         bin_file.write(max_vma_bytes)
         bin_file.write(binary_data)
-    print("we are in vxbin creation")
-    target = "/vortex_bin_" + (datetime.now()).strftime("%H:%M:%S:%f") + ".vxbin"
-    shutil.copyfile(output_bin, "/home/shamil/vortexbins" + target)
-    target_elf = "/vortex_elf_" + (datetime.now()).strftime("%H:%M:%S:%f") + ".elf"
-    with open("/home/shamil/vortexbins/were_is.txt",'w') as file:
-        file.write(os.getcwd())
-    
-    shutil.copyfile(input_elf, "/home/shamil/vortexbins" + target_elf)
-    
+
     # Remove the temporary binary file
     os.remove(temp_bin_path)
     # print("Binary created successfully: {}, min_vma={:x}, max_vma={:x}".format(output_bin, min_vma, max_vma))

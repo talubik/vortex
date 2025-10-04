@@ -34,13 +34,13 @@ int main() {
   }
   int src[] = {10, 20, 30, 40, 50};
   int dst[5] = {0};
-  cl_mem bufSrc = clCreateBuffer(context, 0 ,
-                                 sizeof(src), NULL, &err);
+  cl_mem bufSrc = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR ,
+                                 sizeof(src), &src, &err);
   if(err!= CL_SUCCESS){
     fprintf(stderr, "Failed to create buffer\n");
     return -1;
   }
-  cl_mem bufDst = clCreateBuffer(context, 0,
+  cl_mem bufDst = clCreateBuffer(context, CL_MEM_READ_WRITE,
                                  sizeof(dst), NULL, &err);
   if (err != CL_SUCCESS) {
     fprintf(stderr, "Failed to create buffer\n");
