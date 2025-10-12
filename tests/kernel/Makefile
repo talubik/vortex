@@ -20,7 +20,7 @@ run-rtlsim:
 	$(MAKE) -C hello run-rtlsim
 	$(MAKE) -C fibonacci run-rtlsim
 	$(MAKE) -C vecadd run-rtlsim
-	$(MAKE) -C atomics run-simx
+	$(MAKE) -C atomics run-rtlsim
 	
 clean:
 	$(MAKE) -C conform clean
