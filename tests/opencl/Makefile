@@ -24,6 +24,7 @@ all:
 	$(MAKE) -C bfs
 	$(MAKE) -C twokernels
 	$(MAKE) -C copybuf
+	$(MAKE) -C atomics
 
 
 run-simx:
@@ -48,6 +49,7 @@ run-simx:
 	$(MAKE) -C bfs run-simx
 	$(MAKE) -C twokernels run-simx
 	$(MAKE) -C copybuf run-simx
+	$(MAKE) -C atomics run-simx
 	
 
 
@@ -73,7 +75,7 @@ run-rtlsim:
 	$(MAKE) -C bfs run-rtlsim
 	$(MAKE) -C twokernels run-rtlsim
 	$(MAKE) -C copybuf run-rtlsim
-	
+	$(MAKE) -C atomics run-rtlsim
 
 clean:
 	$(MAKE) -C vecadd clean
