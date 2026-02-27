@@ -30,6 +30,7 @@ interface VX_lsu_mem_if import VX_gpu_pkg::*; #(
     typedef struct packed {
         logic [NUM_LANES-1:0]                  mask;
         logic                                  rw;
+        logic [NUM_LANES-1:0][4:0]             atype;
         logic [NUM_LANES-1:0][ADDR_WIDTH-1:0]  addr;
         logic [NUM_LANES-1:0][DATA_SIZE*8-1:0] data;
         logic [NUM_LANES-1:0][DATA_SIZE-1:0]   byteen;
@@ -43,9 +44,11 @@ interface VX_lsu_mem_if import VX_gpu_pkg::*; #(
         tag_t                                  tag;
     } rsp_data_t;
 
+    /* verilator lint_off UNUSEDSIGNAL */
     logic  req_valid;
     req_data_t req_data;
     logic  req_ready;
+    /* verilator lint_on UNUSEDSIGNAL */
 
     logic  rsp_valid;
     rsp_data_t rsp_data;

@@ -25,13 +25,105 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
 `endif
 
     VX_lsu_mem_if.slave     lsu_mem_if [`NUM_LSU_BLOCKS],
-    VX_mem_bus_if.master    dcache_bus_if [DCACHE_NUM_REQS]
+    VX_mem_bus_if.master    dcache_bus_if [DCACHE_NUM_REQS],
+
+    // Global AMO lock
+    output wire [`NUM_LSU_BLOCKS-1:0] amo_lock_req,
+    output wire [`NUM_LSU_BLOCKS * `CLOG2(`AMO_LOCK_BANKS)-1:0] amo_lock_bank,
+    input  wire [`NUM_LSU_BLOCKS-1:0] amo_lock_grant
 );
+    // Output of AMO handler, input of lmem_switch (or direct to coalescer if no LMEM)
+    VX_lsu_mem_if #(
+        .NUM_LANES (`NUM_LSU_LANES),
+        .DATA_SIZE (LSU_WORD_SIZE),
+        .TAG_WIDTH (LSU_TAG_WIDTH)
+    ) lsu_amo_out_if[`NUM_LSU_BLOCKS]();
+
+    // Output of lmem_switch global path (or AMO handler if no LMEM), input of coalescer
     VX_lsu_mem_if #(
         .NUM_LANES (`NUM_LSU_LANES),
         .DATA_SIZE (LSU_WORD_SIZE),
         .TAG_WIDTH (LSU_TAG_WIDTH)
     ) lsu_dcache_if[`NUM_LSU_BLOCKS]();
+
+    wire [`NUM_LSU_BLOCKS-1:0] coalescer_pending;
+`ifdef LMEM_ENABLE
+    wire [`NUM_LSU_BLOCKS-1:0] amo_local_lock_req;
+    wire [`NUM_LSU_BLOCKS-1:0] amo_local_lock_grant;
+`endif
+
+    // AMO handler is placed BEFORE lmem_switch so that local atomics
+    // also go through the read-modify-write FSM.
+    for (genvar i = 0; i < `NUM_LSU_BLOCKS; ++i) begin : g_amo_handlers
+        VX_amo_handler #(
+            .NUM_LANES  (`NUM_LSU_LANES),
+            .DATA_SIZE  (LSU_WORD_SIZE),
+            .TAG_WIDTH  (LSU_TAG_WIDTH),
+            .ADDR_WIDTH (LSU_ADDR_WIDTH)
+        ) amo_handler (
+            .clk           (clk),
+            .reset         (reset),
+            .core_mem_if   (lsu_mem_if[i]),
+            .next_mem_if   (lsu_amo_out_if[i]),
+            .next_pending  (coalescer_pending[i]),
+            .amo_lock_req  (amo_lock_req[i]),
+            .amo_lock_bank (amo_lock_bank[i * `CLOG2(`AMO_LOCK_BANKS) +: `CLOG2(`AMO_LOCK_BANKS)]),
+            .amo_lock_grant(amo_lock_grant[i]),
+        `ifdef LMEM_ENABLE
+            .amo_local_lock_req  (amo_local_lock_req[i]),
+            .amo_local_lock_grant(amo_local_lock_grant[i])
+        `endif
+        );
+    end
+
+`ifdef LMEM_ENABLE
+    localparam AMO_LOCAL_AGENTS_BITS = `LOG2UP(NUM_LSU_BLOCKS);
+    reg [AMO_LOCAL_AGENTS_BITS-1:0] lmem_owner_r;
+    reg [AMO_LOCAL_AGENTS_BITS-1:0] lmem_rr_r;
+    reg                             lock_active;
+
+    if (NUM_LSU_BLOCKS > 1) begin : g_lmem_lock_arbitr
+        wire [`NUM_LSU_BLOCKS-1:0] local_lock_reqs;
+        for (genvar i = 0; i < `NUM_LSU_BLOCKS; ++i) begin : g_lolal_reqs
+            assign local_lock_reqs[i] = amo_local_lock_req[i];
+        end
+
+        always @(posedge clk) begin
+            if(reset) begin
+                lmem_owner_r <= 1'b0;
+                lmem_rr_r <= 1'b0;
+                lock_active <= 1'b0;
+            end else begin
+                if (lock_active) begin
+                    if(!local_lock_reqs[lmem_owner_r]) begin
+                        lock_active <= 0;
+                        if (AMO_LOCAL_AGENTS_BITS'(NUM_LSU_BLOCKS - 1) == lmem_owner_r) begin
+                            lmem_rr_r <= '0;
+                        end else begin
+                            lmem_rr_r <= lmem_owner_r + AMO_LOCAL_AGENTS_BITS'(1);
+                        end
+                    end
+                end else begin
+                    for (integer j = 0; j < NUM_LSU_BLOCKS; ++j) begin
+                        if(local_lock_reqs[AMO_LOCAL_AGENTS_BITS'(integer'(lmem_rr_r + i)) % NUM_LSU_BLOCKS]) begin
+                            lock_active <= 1'b1;
+                            lmem_owner_r <= AMO_LOCAL_AGENTS_BITS'(integer'(lmem_rr_r + i)) % NUM_LSU_BLOCKS;
+                            break;
+                        end
+                    end
+                end
+            end
+        end
+
+        for(genvar i = 0; i < NUM_LSU_BLOCKS; ++i) begin : g_local_amo_grant
+            wire lock_local_grant;
+            assign lock_local_grant = lock_active && (lmem_owner_r == AMO_LOCAL_AGENTS_BITS'(i))
+            assign amo_local_lock_grant[i] = | lock_local_grant
+        end
+    end else begin : g_lmem_lock_passthru
+        assign amo_local_lock_grant[0] = 1'b1;
+    end
+`endif
 
 `ifdef LMEM_ENABLE
 
@@ -55,7 +147,7 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
         ) lmem_switch (
             .clk          (clk),
             .reset        (reset),
-            .lsu_in_if    (lsu_mem_if[i]),
+            .lsu_in_if    (lsu_amo_out_if[i]),
             .global_out_if(lsu_dcache_if[i]),
             .local_out_if (lsu_lmem_if[i])
         );
@@ -129,7 +221,7 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
 `endif
 
     for (genvar i = 0; i < `NUM_LSU_BLOCKS; ++i) begin : g_lsu_dcache_if
-        `ASSIGN_VX_MEM_BUS_IF (lsu_dcache_if[i], lsu_mem_if[i]);
+        `ASSIGN_VX_MEM_BUS_IF (lsu_dcache_if[i], lsu_amo_out_if[i]);
     end
 
 `endif
@@ -212,8 +304,16 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
                 .out_rsp_mask   (dcache_coalesced_if[i].rsp_data.mask),
                 .out_rsp_data   (dcache_coalesced_if[i].rsp_data.data),
                 .out_rsp_tag    (dcache_coalesced_if[i].rsp_data.tag),
-                .out_rsp_ready  (dcache_coalesced_if[i].rsp_ready)
+                .out_rsp_ready  (dcache_coalesced_if[i].rsp_ready),
+
+                // Queue status
+                .empty          (coalescer_empty[i])
             );
+        end
+
+        wire [`NUM_LSU_BLOCKS-1:0] coalescer_empty;
+        for (genvar i = 0; i < `NUM_LSU_BLOCKS; ++i) begin : g_coalescer_pending
+            assign coalescer_pending[i] = ~coalescer_empty[i];
         end
 
     end else begin : g_passthru
@@ -223,6 +323,9 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
         `ifdef PERF_ENABLE
             assign per_block_coalescer_misses[i] = '0;
         `endif
+        end
+        for (genvar i = 0; i < `NUM_LSU_BLOCKS; ++i) begin : g_no_coalescer_pending
+            assign coalescer_pending[i] = 1'b0;
         end
 
     end

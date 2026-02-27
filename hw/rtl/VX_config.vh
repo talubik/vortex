@@ -860,6 +860,11 @@
     `define EXT_A_ENABLED   0
 `endif
 
+// Number of AMO lock banks for address-hashed parallel atomics (must be power of 2)
+`ifndef AMO_LOCK_BANKS
+`define AMO_LOCK_BANKS 4
+`endif
+
 `ifdef EXT_C_ENABLE
     `define EXT_C_ENABLED   1
 `else

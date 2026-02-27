@@ -37,6 +37,12 @@ module VX_socket import VX_gpu_pkg::*; #(
     // Barrier
     VX_gbar_bus_if.master   gbar_bus_if,
 `endif
+
+    // Global AMO lock
+    output wire [`SOCKET_SIZE * `NUM_LSU_BLOCKS - 1:0] amo_lock_req,
+    output wire [`SOCKET_SIZE * `NUM_LSU_BLOCKS * `CLOG2(`AMO_LOCK_BANKS) - 1:0] amo_lock_bank,
+    input  wire [`SOCKET_SIZE * `NUM_LSU_BLOCKS - 1:0] amo_lock_grant,
+
     // Status
     output wire             busy
 );
@@ -245,6 +251,10 @@ module VX_socket import VX_gpu_pkg::*; #(
         `ifdef GBAR_ENABLE
             .gbar_bus_if    (per_core_gbar_bus_if[core_id]),
         `endif
+
+            .amo_lock_req   (amo_lock_req[core_id * `NUM_LSU_BLOCKS +: `NUM_LSU_BLOCKS]),
+            .amo_lock_bank  (amo_lock_bank[core_id * `NUM_LSU_BLOCKS * `CLOG2(`AMO_LOCK_BANKS) +: `NUM_LSU_BLOCKS * `CLOG2(`AMO_LOCK_BANKS)]),
+            .amo_lock_grant (amo_lock_grant[core_id * `NUM_LSU_BLOCKS +: `NUM_LSU_BLOCKS]),
 
             .busy           (per_core_busy[core_id])
         );

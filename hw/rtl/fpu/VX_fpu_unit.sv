@@ -114,7 +114,7 @@ module VX_fpu_unit import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
         // resolve dynamic FRM from CSR
         wire [INST_FRM_BITS-1:0] fpu_req_frm;
         `ASSIGN_BLOCKED_WID (fpu_csr_if[block_idx].read_wid, per_block_execute_if[block_idx].data.wid, block_idx, `NUM_FPU_BLOCKS)
-        assign fpu_req_frm = (per_block_execute_if[block_idx].data.op_type != INST_FPU_MISC
+        assign fpu_req_frm = (per_block_execute_if[block_idx].data.op_type[INST_FPU_BITS-1:0] != INST_FPU_MISC
                            && fpu_frm == INST_FRM_DYN) ? fpu_csr_if[block_idx].read_frm : fpu_frm;
 
         // submit FPU request
@@ -134,7 +134,7 @@ module VX_fpu_unit import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
 
             .valid_in   (fpu_req_valid),
             .mask_in    (per_block_execute_if[block_idx].data.tmask),
-            .op_type    (per_block_execute_if[block_idx].data.op_type),
+            .op_type    (per_block_execute_if[block_idx].data.op_type[INST_FPU_BITS-1:0]),
             .fmt        (fpu_fmt),
             .frm        (fpu_req_frm),
             .dataa      (per_block_execute_if[block_idx].data.rs1_data),
@@ -163,7 +163,7 @@ module VX_fpu_unit import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
 
             .valid_in   (fpu_req_valid),
             .mask_in    (per_block_execute_if[block_idx].data.tmask),
-            .op_type    (per_block_execute_if[block_idx].data.op_type),
+            .op_type    (per_block_execute_if[block_idx].data.op_type[INST_FPU_BITS-1:0]),
             .fmt        (fpu_fmt),
             .frm        (fpu_req_frm),
             .dataa      (per_block_execute_if[block_idx].data.rs1_data),
@@ -192,7 +192,7 @@ module VX_fpu_unit import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
 
             .valid_in   (fpu_req_valid),
             .mask_in    (per_block_execute_if[block_idx].data.tmask),
-            .op_type    (per_block_execute_if[block_idx].data.op_type),
+            .op_type    (per_block_execute_if[block_idx].data.op_type[INST_FPU_BITS-1:0]),
             .fmt        (fpu_fmt),
             .frm        (fpu_req_frm),
             .dataa      (per_block_execute_if[block_idx].data.rs1_data),

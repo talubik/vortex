@@ -129,6 +129,71 @@ module Vortex import VX_gpu_pkg::*; (
 
     wire [`NUM_CLUSTERS-1:0] per_cluster_busy;
 
+    // Banked AMO lock arbiter with address hashing
+    localparam AMO_CORES_PER_CLUSTER = NUM_SOCKETS * `SOCKET_SIZE * `NUM_LSU_BLOCKS;
+    localparam AMO_TOTAL_AGENTS = `NUM_CLUSTERS * AMO_CORES_PER_CLUSTER;
+    localparam AMO_BANKS        = `AMO_LOCK_BANKS;
+    localparam AMO_BANK_BITS    = `CLOG2(AMO_BANKS);
+    localparam AMO_AGENT_BITS   = `LOG2UP(AMO_TOTAL_AGENTS);
+
+    wire [AMO_TOTAL_AGENTS-1:0]                     amo_lock_req_all;
+    wire [AMO_TOTAL_AGENTS * AMO_BANK_BITS - 1:0]   amo_lock_bank_all;
+    wire [AMO_TOTAL_AGENTS-1:0]                     amo_lock_grant_all;
+
+    // Per-bank arbiter state
+    reg  [AMO_BANKS-1:0]                         bank_active_r;
+    reg  [AMO_BANKS-1:0][AMO_AGENT_BITS-1:0]     bank_owner_r;
+    reg  [AMO_BANKS-1:0][AMO_AGENT_BITS-1:0]     bank_rr_r;
+
+    // Per-bank request: agent i requests bank b if req=1 && bank==b
+    for (genvar b = 0; b < AMO_BANKS; ++b) begin : g_amo_bank_arb
+        // Collect per-bank requests
+        wire [AMO_TOTAL_AGENTS-1:0] bank_req;
+        for (genvar a = 0; a < AMO_TOTAL_AGENTS; ++a) begin : g_bank_req
+            assign bank_req[a] = amo_lock_req_all[a]
+                && (amo_lock_bank_all[a * AMO_BANK_BITS +: AMO_BANK_BITS] == AMO_BANK_BITS'(b));
+        end
+
+        always @(posedge clk) begin
+            if (reset) begin
+                bank_active_r[b] <= 1'b0;
+                bank_owner_r[b]  <= '0;
+                bank_rr_r[b]     <= '0;
+            end else begin
+                if (bank_active_r[b]) begin
+                    // Release when owner drops request (or switches to different bank)
+                    if (!bank_req[bank_owner_r[b]]) begin
+                        bank_active_r[b] <= 1'b0;
+                        if (AMO_AGENT_BITS'(AMO_TOTAL_AGENTS - 1) == bank_owner_r[b]) begin
+                            bank_rr_r[b] <= '0;
+                        end else begin
+                            bank_rr_r[b] <= bank_owner_r[b] + AMO_AGENT_BITS'(1);
+                        end
+                    end
+                end else begin
+                    // Round-robin grant for this bank
+                    for (integer i = 0; i < AMO_TOTAL_AGENTS; ++i) begin
+                        if (bank_req[AMO_AGENT_BITS'((integer'(bank_rr_r[b]) + i) % AMO_TOTAL_AGENTS)]) begin
+                            bank_active_r[b] <= 1'b1;
+                            bank_owner_r[b]  <= AMO_AGENT_BITS'((integer'(bank_rr_r[b]) + i) % AMO_TOTAL_AGENTS);
+                            break;
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    // Grant: agent gets grant if ANY bank has it as owner and is active
+    for (genvar a = 0; a < AMO_TOTAL_AGENTS; ++a) begin : g_amo_grant
+        wire [AMO_BANKS-1:0] agent_granted;
+        for (genvar b = 0; b < AMO_BANKS; ++b) begin : g_check_bank
+            assign agent_granted[b] = bank_active_r[b]
+                && (bank_owner_r[b] == AMO_AGENT_BITS'(a));
+        end
+        assign amo_lock_grant_all[a] = |agent_granted;
+    end
+
     // Generate all clusters
     for (genvar cluster_id = 0; cluster_id < `NUM_CLUSTERS; ++cluster_id) begin : g_clusters
 
@@ -153,6 +218,10 @@ module Vortex import VX_gpu_pkg::*; (
             .dcr_bus_if         (cluster_dcr_bus_if),
 
             .mem_bus_if         (per_cluster_mem_bus_if[cluster_id * `L2_MEM_PORTS +: `L2_MEM_PORTS]),
+
+            .amo_lock_req       (amo_lock_req_all[cluster_id * AMO_CORES_PER_CLUSTER +: AMO_CORES_PER_CLUSTER]),
+            .amo_lock_bank      (amo_lock_bank_all[cluster_id * AMO_CORES_PER_CLUSTER * AMO_BANK_BITS +: AMO_CORES_PER_CLUSTER * AMO_BANK_BITS]),
+            .amo_lock_grant     (amo_lock_grant_all[cluster_id * AMO_CORES_PER_CLUSTER +: AMO_CORES_PER_CLUSTER]),
 
             .busy               (per_cluster_busy[cluster_id])
         );

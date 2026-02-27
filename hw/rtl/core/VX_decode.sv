@@ -115,11 +115,11 @@ module VX_decode import VX_gpu_pkg::*; #(
     reg [INST_BR_BITS-1:0] s_type;
     always @(*) begin
         case (u_12)
-            12'h000: s_type = INST_OP_BITS'(INST_BR_ECALL);
-            12'h001: s_type = INST_OP_BITS'(INST_BR_EBREAK);
-            12'h002: s_type = INST_OP_BITS'(INST_BR_URET);
-            12'h102: s_type = INST_OP_BITS'(INST_BR_SRET);
-            12'h302: s_type = INST_OP_BITS'(INST_BR_MRET);
+            12'h000: s_type = INST_BR_ECALL;
+            12'h001: s_type = INST_BR_EBREAK;
+            12'h002: s_type = INST_BR_URET;
+            12'h102: s_type = INST_BR_SRET;
+            12'h302: s_type = INST_BR_MRET;
             default: s_type = 'x;
         endcase
     end
@@ -293,6 +293,7 @@ module VX_decode import VX_gpu_pkg::*; #(
                 op_type = INST_LSU_FENCE;
                 op_args.lsu.is_store = 0;
                 op_args.lsu.is_float = 0;
+                op_args.lsu.amo_wsize = 0;
                 op_args.lsu.offset = 0;
             end
             INST_SYS : begin
@@ -320,6 +321,44 @@ module VX_decode import VX_gpu_pkg::*; #(
                     `USED_IREG (rd);
                 end
             end
+        `ifdef EXT_A_ENABLE
+            INST_AMO: begin
+                ex_type = EX_LSU;
+                // All AMOs write back to rd, so is_store=0 to ensure the
+                // mem_scheduler allocates an index-buffer entry for tag tracking.
+                // The AMO handler performs the actual read-modify-write internally.
+                op_args.lsu.is_store = 0;
+                op_args.lsu.is_float = 0;
+                op_args.lsu.offset   = 0; // Address is in rs1, no immediate offset
+                op_args.lsu.amo_wsize = funct3[1:0]; // width: 2=word(.w), 3=dword(.d)
+                `USED_IREG (rd);
+                `USED_IREG (rs1);
+                case (funct5)
+                    5'b00010: begin // LR
+                        op_type = INST_OP_BITS'(INST_LSU_AMO_LR);
+                    end
+                    5'b00011: begin // SC
+                        op_type = INST_OP_BITS'(INST_LSU_AMO_SC);
+                        `USED_IREG (rs2);
+                    end
+                    default: begin
+                        `USED_IREG (rs2);
+                        case (funct5)
+                            5'b00001: op_type = INST_OP_BITS'(INST_LSU_AMO_SWAP);
+                            5'b00000: op_type = INST_OP_BITS'(INST_LSU_AMO_ADD);
+                            5'b00100: op_type = INST_OP_BITS'(INST_LSU_AMO_XOR);
+                            5'b01100: op_type = INST_OP_BITS'(INST_LSU_AMO_AND);
+                            5'b01000: op_type = INST_OP_BITS'(INST_LSU_AMO_OR);
+                            5'b10000: op_type = INST_OP_BITS'(INST_LSU_AMO_MIN);
+                            5'b10100: op_type = INST_OP_BITS'(INST_LSU_AMO_MAX);
+                            5'b11000: op_type = INST_OP_BITS'(INST_LSU_AMO_MINU);
+                            5'b11100: op_type = INST_OP_BITS'(INST_LSU_AMO_MAXU);
+                            default:;
+                        endcase
+                    end
+                endcase
+            end
+        `endif
         `ifdef EXT_F_ENABLE
             INST_FL,
         `endif
@@ -328,6 +367,7 @@ module VX_decode import VX_gpu_pkg::*; #(
                 op_type = INST_OP_BITS'({1'b0, funct3});
                 op_args.lsu.is_store = 0;
                 op_args.lsu.is_float = opcode[2];
+                op_args.lsu.amo_wsize = 0;
                 op_args.lsu.offset = u_12;
                 `USED_IREG (rs1);
             `ifdef EXT_F_ENABLE
@@ -344,6 +384,7 @@ module VX_decode import VX_gpu_pkg::*; #(
                 op_type = INST_OP_BITS'({1'b1, funct3});
                 op_args.lsu.is_store = 1;
                 op_args.lsu.is_float = opcode[2];
+                op_args.lsu.amo_wsize = 0;
                 op_args.lsu.offset = s_imm;
                 `USED_IREG (rs1);
             `ifdef EXT_F_ENABLE

@@ -139,6 +139,7 @@ package VX_gpu_pkg;
     localparam INST_I =          7'b0010011; // immediate instructions
     localparam INST_R =          7'b0110011; // register instructions
     localparam INST_V =          7'b1010111; // vector instructions
+    localparam INST_AMO =        7'b0101111; // Atomic instructions
     localparam INST_FENCE =      7'b0001111; // Fence instructions
     localparam INST_SYS =        7'b1110011; // system instructions
 
@@ -176,7 +177,7 @@ package VX_gpu_pkg;
 
     ///////////////////////////////////////////////////////////////////////////
 
-    localparam INST_OP_BITS =    4;
+    localparam INST_OP_BITS =    5;
     localparam INST_FMT_BITS =   2;
 
     ///////////////////////////////////////////////////////////////////////////
@@ -314,19 +315,33 @@ package VX_gpu_pkg;
     localparam LSU_FMT_HU =      3'b101;
     localparam LSU_FMT_WU =      3'b110;
 
-    localparam INST_LSU_LB =     4'b0000;
-    localparam INST_LSU_LH =     4'b0001;
-    localparam INST_LSU_LW =     4'b0010;
-    localparam INST_LSU_LD =     4'b0011; // new for RV64I LD
-    localparam INST_LSU_LBU =    4'b0100;
-    localparam INST_LSU_LHU =    4'b0101;
-    localparam INST_LSU_LWU =    4'b0110; // new for RV64I LWU
-    localparam INST_LSU_SB =     4'b1000;
-    localparam INST_LSU_SH =     4'b1001;
-    localparam INST_LSU_SW =     4'b1010;
-    localparam INST_LSU_SD =     4'b1011; // new for RV64I SD
-    localparam INST_LSU_FENCE =  4'b1111;
-    localparam INST_LSU_BITS =   4;
+    localparam INST_LSU_LB =     5'b00000;
+    localparam INST_LSU_LH =     5'b00001;
+    localparam INST_LSU_LW =     5'b00010;
+    localparam INST_LSU_LD =     5'b00011; // new for RV64I LD
+    localparam INST_LSU_LBU =    5'b00100;
+    localparam INST_LSU_LHU =    5'b00101;
+    localparam INST_LSU_LWU =    5'b00110; // new for RV64I LWU
+    localparam INST_LSU_SB =     5'b01000;
+    localparam INST_LSU_SH =     5'b01001;
+    localparam INST_LSU_SW =     5'b01010;
+    localparam INST_LSU_SD =     5'b01011; // new for RV64I SD
+    localparam INST_LSU_FENCE =  5'b01111;
+
+    // Atomic operations
+    localparam INST_LSU_AMO_LR   = 5'b10000;
+    localparam INST_LSU_AMO_SC   = 5'b10001;
+    localparam INST_LSU_AMO_SWAP = 5'b10010;
+    localparam INST_LSU_AMO_ADD  = 5'b10011;
+    localparam INST_LSU_AMO_XOR  = 5'b10100;
+    localparam INST_LSU_AMO_AND  = 5'b10101;
+    localparam INST_LSU_AMO_OR   = 5'b10110;
+    localparam INST_LSU_AMO_MIN  = 5'b10111;
+    localparam INST_LSU_AMO_MAX  = 5'b11000;
+    localparam INST_LSU_AMO_MINU = 5'b11001;
+    localparam INST_LSU_AMO_MAXU = 5'b11010;
+
+    localparam INST_LSU_BITS =   5;
 
     localparam INST_FENCE_BITS = 1;
     localparam INST_FENCE_D =    1'h0;
@@ -341,7 +356,7 @@ package VX_gpu_pkg;
     endfunction
 
     function automatic logic inst_lsu_is_fence(input logic [INST_LSU_BITS-1:0] op);
-        return (op[3:2] == 3);
+        return (op[3:2] == 3) && (op[INST_LSU_BITS-1] == 0);
     endfunction
 
     ///////////////////////////////////////////////////////////////////////////
@@ -371,19 +386,19 @@ package VX_gpu_pkg;
 
     ///////////////////////////////////////////////////////////////////////////
 
-    localparam INST_SFU_TMC =    4'h0;
-    localparam INST_SFU_WSPAWN = 4'h1;
-    localparam INST_SFU_SPLIT =  4'h2;
-    localparam INST_SFU_JOIN =   4'h3;
-    localparam INST_SFU_BAR =    4'h4;
-    localparam INST_SFU_PRED =   4'h5;
-    localparam INST_SFU_CSRRW =  4'h6;
-    localparam INST_SFU_CSRRS =  4'h7;
-    localparam INST_SFU_CSRRC =  4'h8;
-    localparam INST_SFU_BITS =   4;
+    localparam INST_SFU_TMC =    5'h0;
+    localparam INST_SFU_WSPAWN = 5'h1;
+    localparam INST_SFU_SPLIT =  5'h2;
+    localparam INST_SFU_JOIN =   5'h3;
+    localparam INST_SFU_BAR =    5'h4;
+    localparam INST_SFU_PRED =   5'h5;
+    localparam INST_SFU_CSRRW =  5'h6;
+    localparam INST_SFU_CSRRS =  5'h7;
+    localparam INST_SFU_CSRRC =  5'h8;
+    localparam INST_SFU_BITS =   5;
 
-    function automatic logic [3:0] inst_sfu_csr(input logic [2:0] funct3);
-        return (4'h6 + 4'(funct3[1:0]) - 4'h1);
+    function automatic logic [INST_SFU_BITS-1:0] inst_sfu_csr(input logic [2:0] funct3);
+        return (INST_SFU_CSRRW + INST_SFU_BITS'(funct3[1:0]) - INST_SFU_BITS'(1));
     endfunction
 
     function automatic logic inst_sfu_is_wctl(input logic [INST_SFU_BITS-1:0] op);
@@ -509,9 +524,10 @@ package VX_gpu_pkg;
     `PACKAGE_ASSERT($bits(fpu_args_t) == INST_ARGS_BITS)
 
     typedef struct packed {
-        logic [(INST_ARGS_BITS-1-1-OFFSET_BITS)-1:0] __padding;
+        logic [(INST_ARGS_BITS-1-1-2-OFFSET_BITS)-1:0] __padding;
         logic is_store;
         logic is_float;
+        logic [1:0] amo_wsize; // AMO access width from funct3[1:0]: 2=word, 3=dword
         logic [OFFSET_BITS-1:0] offset;
     } lsu_args_t;
     `PACKAGE_ASSERT($bits(lsu_args_t) == INST_ARGS_BITS)
@@ -635,7 +651,7 @@ package VX_gpu_pkg;
         logic [SIMD_IDX_W-1:0]              sid;
         logic [`SIMD_WIDTH-1:0]             tmask;
         logic [PC_BITS-1:0]                 PC;
-        logic [INST_ALU_BITS-1:0]           op_type;
+        logic [INST_OP_BITS-1:0]            op_type;
         op_args_t                           op_args;
         logic                               wb;
         logic [NUM_REGS_BITS-1:0]           rd;

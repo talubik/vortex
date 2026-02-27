@@ -441,7 +441,7 @@
         logic [NW_WIDTH-1:0]            wid; \
         logic [__lanes__-1:0]           tmask; \
         logic [PC_BITS-1:0]             PC; \
-        logic [INST_ALU_BITS-1:0]       op_type; \
+        logic [INST_OP_BITS-1:0]        op_type; \
         op_args_t                       op_args; \
         logic                           wb; \
         logic [NUM_REGS_BITS-1:0]       rd; \

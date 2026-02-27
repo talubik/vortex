@@ -74,7 +74,10 @@ module VX_mem_coalescer #(
     input wire [OUT_REQS-1:0]           out_rsp_mask,
     input wire [OUT_REQS-1:0][DATA_OUT_WIDTH-1:0] out_rsp_data,
     input wire [OUT_TAG_WIDTH-1:0]      out_rsp_tag,
-    output wire                         out_rsp_ready
+    output wire                         out_rsp_ready,
+
+    // Queue status
+    output wire                         empty
 );
     `UNUSED_SPARAM (INSTANCE_ID)
     `STATIC_ASSERT ((NUM_REQS > 1), ("invalid parameter"))
@@ -268,6 +271,8 @@ module VX_mem_coalescer #(
         .empty        (ibuf_empty)
     );
     `UNUSED_VAR (ibuf_empty)
+
+    assign empty = ibuf_empty;
 
     assign out_req_valid  = out_req_valid_r;
     assign out_req_rw     = out_req_rw_r;

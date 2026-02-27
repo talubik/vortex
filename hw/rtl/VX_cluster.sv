@@ -33,6 +33,11 @@ module VX_cluster import VX_gpu_pkg::*; #(
     // Memory
     VX_mem_bus_if.master        mem_bus_if [`L2_MEM_PORTS],
 
+    // Global AMO lock
+    output wire [NUM_SOCKETS * `SOCKET_SIZE * `NUM_LSU_BLOCKS - 1:0] amo_lock_req,
+    output wire [NUM_SOCKETS * `SOCKET_SIZE * `NUM_LSU_BLOCKS * `CLOG2(`AMO_LOCK_BANKS) - 1:0] amo_lock_bank,
+    input  wire [NUM_SOCKETS * `SOCKET_SIZE * `NUM_LSU_BLOCKS - 1:0] amo_lock_grant,
+
     // Status
     output wire                 busy
 );
@@ -148,6 +153,10 @@ module VX_cluster import VX_gpu_pkg::*; #(
         `ifdef GBAR_ENABLE
             .gbar_bus_if    (per_socket_gbar_bus_if[socket_id]),
         `endif
+
+            .amo_lock_req   (amo_lock_req[socket_id * (`SOCKET_SIZE * `NUM_LSU_BLOCKS) +: (`SOCKET_SIZE * `NUM_LSU_BLOCKS)]),
+            .amo_lock_bank  (amo_lock_bank[socket_id * (`SOCKET_SIZE * `NUM_LSU_BLOCKS * `CLOG2(`AMO_LOCK_BANKS)) +: (`SOCKET_SIZE * `NUM_LSU_BLOCKS * `CLOG2(`AMO_LOCK_BANKS))]),
+            .amo_lock_grant (amo_lock_grant[socket_id * (`SOCKET_SIZE * `NUM_LSU_BLOCKS) +: (`SOCKET_SIZE * `NUM_LSU_BLOCKS)]),
 
             .busy           (per_socket_busy[socket_id])
         );

@@ -273,7 +273,10 @@ module VX_mem_scheduler #(
             .out_rsp_mask   (mem_rsp_mask),
             .out_rsp_data   (mem_rsp_data),
             .out_rsp_tag    (mem_rsp_tag),
-            .out_rsp_ready  (mem_rsp_ready)
+            .out_rsp_ready  (mem_rsp_ready),
+
+            // Queue status
+            `UNUSED_PIN (empty)
         );
 
     end else begin : g_no_coalescer
