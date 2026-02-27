@@ -41,12 +41,9 @@ _start:
   li    t0, 1
   .insn r RISCV_CUSTOM0, 0, 0, x0, t0, x0  # tmc t0
 
-  # clear BSS segment
-  la    a0, _edata
-  la    a2, _end
-  sub   a2, a2, a0
-  li    a1, 0
-  call  memset
+  # BSS is pre-zeroed by the host loader; skip clearing here
+  # to avoid a race between cores (fast core enters main while
+  # slow core is still in memset, overwriting globals).
 
   # initialize trap vector
   # la t0, trap_entry
