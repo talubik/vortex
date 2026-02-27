@@ -521,6 +521,9 @@ void RAM::loadBinImage(const char* filename, uint64_t destination) {
 
   this->clear();
   this->write(content.data(), destination, size);
+  const size_t bss_pad = 16 * 1024 * 1024;
+  std::vector<uint8_t> zeros(bss_pad, 0);
+  this->write(zeros.data(), destination + size, bss_pad);
 }
 
 void RAM::loadHexImage(const char* filename) {
