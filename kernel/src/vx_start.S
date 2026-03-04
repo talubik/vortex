@@ -41,9 +41,11 @@ _start:
   li    t0, 1
   .insn r RISCV_CUSTOM0, 0, 0, x0, t0, x0  # tmc t0
 
-  # BSS is pre-zeroed by the host loader; skip clearing here
-  # to avoid a race between cores (fast core enters main while
-  # slow core is still in memset, overwriting globals).
+  # BSS is pre-zeroed by the host loader (vx_upload_kernel_bytes zeros
+  # the [bin_size, runtime_size) region before starting the GPU).
+  # Do NOT clear BSS here: all cores run _start concurrently, so a
+  # GPU-side memset would race — a fast core enters main() while a slow
+  # core's memset is still running and overwrites initialised globals.
 
   # initialize trap vector
   # la t0, trap_entry
@@ -120,3 +122,4 @@ init_tls_all:
 	.weak __dso_handle
 __dso_handle:
 	.long	0
+
