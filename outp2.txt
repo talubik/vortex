@@ -1,0 +1,17 @@
+CONFIGS=-DNUM_THREADS=4
+Running: CONFIGS="-DNUM_THREADS=4" make -C ./ci/../runtime/simx > /dev/null
+Running: make -C "./ci/../tests/opencl/lmemtest" run-simx
+make: Entering directory '/home/shamil/copybuf_vortex/vortex/build/tests/opencl/lmemtest'
+LD_LIBRARY_PATH=/home/shamil/tools/pocl/lib:/home/shamil/copybuf_vortex/vortex/build/runtime:/home/shamil/tools/llvm-vortex/lib: POCL_VORTEX_XLEN=64 LLVM_PREFIX=/home/shamil/tools/llvm-vortex POCL_VORTEX_BINTOOL="OBJCOPY=/home/shamil/tools/llvm-vortex/bin/llvm-objcopy /home/shamil/copybuf_vortex/vortex/kernel/scripts/vxbin.py" POCL_VORTEX_CFLAGS="-march=rv64imafd -mabi=lp64d -O3 -mcmodel=medany --sysroot=/home/shamil/tools/riscv64-gnu-toolchain/riscv64-unknown-elf --gcc-toolchain=/home/shamil/tools/riscv64-gnu-toolchain -fno-rtti -fno-exceptions -nostartfiles -nostdlib -fdata-sections -ffunction-sections -I/home/shamil/copybuf_vortex/vortex/build/hw -I/home/shamil/copybuf_vortex/vortex/kernel/include -DXLEN_64 -DNDEBUG  -Xclang -target-feature -Xclang +vortex -Xclang -target-feature -Xclang +zicond -mllvm -disable-loop-idiom-all	" POCL_VORTEX_LDFLAGS="-Wl,-Bstatic,--gc-sections,-T/home/shamil/copybuf_vortex/vortex/kernel/scripts/link64.ld,--defsym=STARTUP_ADDR=0x80000000 /home/shamil/copybuf_vortex/vortex/build/kernel/libvortex.a -L/home/shamil/tools/libc64/lib -lm -lc /home/shamil/tools/libcrt64/lib/baremetal/libclang_rt.builtins-riscv64.a" VORTEX_DRIVER=simx ./lmemtest -n4
+local_size=4
+Create context
+Allocate device buffer (20 bytes)
+Create program from kernel source
+Execute kernel
+Read output
+Verify result
+*** FAIL: pointer diff B-A = -4, expected 4
+         (bug shifts A/B to wrong offsets in local memory)
+FAILED! - 1 errors
+PERF: instrs=3889, cycles=11601, IPC=0.335230
+make: Leaving directory '/home/shamil/copybuf_vortex/vortex/build/tests/opencl/lmemtest'
