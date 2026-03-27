@@ -48,7 +48,9 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
 
     wire [`NUM_LSU_BLOCKS-1:0] coalescer_pending;
 `ifdef LMEM_ENABLE
+    `IGNORE_UNUSED_BEGIN
     wire [`NUM_LSU_BLOCKS-1:0] amo_local_lock_req;
+    `IGNORE_UNUSED_END
     wire [`NUM_LSU_BLOCKS-1:0] amo_local_lock_grant;
 `endif
 
@@ -77,12 +79,12 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
     end
 
 `ifdef LMEM_ENABLE
-    localparam AMO_LOCAL_AGENTS_BITS = `LOG2UP(NUM_LSU_BLOCKS);
-    reg [AMO_LOCAL_AGENTS_BITS-1:0] lmem_owner_r;
-    reg [AMO_LOCAL_AGENTS_BITS-1:0] lmem_rr_r;
-    reg                             lock_active;
+    localparam AMO_LOCAL_AGENTS_BITS = `LOG2UP(`NUM_LSU_BLOCKS);
 
-    if (NUM_LSU_BLOCKS > 1) begin : g_lmem_lock_arbitr
+    if (`NUM_LSU_BLOCKS > 1) begin : g_lmem_lock_arbitr
+        reg [AMO_LOCAL_AGENTS_BITS-1:0] lmem_owner_r;
+        reg [AMO_LOCAL_AGENTS_BITS-1:0] lmem_rr_r;
+        reg                             lock_active;
         wire [`NUM_LSU_BLOCKS-1:0] local_lock_reqs;
         for (genvar i = 0; i < `NUM_LSU_BLOCKS; ++i) begin : g_lolal_reqs
             assign local_lock_reqs[i] = amo_local_lock_req[i];
@@ -97,17 +99,17 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
                 if (lock_active) begin
                     if(!local_lock_reqs[lmem_owner_r]) begin
                         lock_active <= 0;
-                        if (AMO_LOCAL_AGENTS_BITS'(NUM_LSU_BLOCKS - 1) == lmem_owner_r) begin
+                        if (AMO_LOCAL_AGENTS_BITS'(`NUM_LSU_BLOCKS - 1) == lmem_owner_r) begin
                             lmem_rr_r <= '0;
                         end else begin
                             lmem_rr_r <= lmem_owner_r + AMO_LOCAL_AGENTS_BITS'(1);
                         end
                     end
                 end else begin
-                    for (integer j = 0; j < NUM_LSU_BLOCKS; ++j) begin
-                        if(local_lock_reqs[AMO_LOCAL_AGENTS_BITS'(integer'(lmem_rr_r + i)) % NUM_LSU_BLOCKS]) begin
+                    for (integer j = 0; j < `NUM_LSU_BLOCKS; ++j) begin
+                        if(local_lock_reqs[AMO_LOCAL_AGENTS_BITS'(integer'(lmem_rr_r + j)) % `NUM_LSU_BLOCKS]) begin
                             lock_active <= 1'b1;
-                            lmem_owner_r <= AMO_LOCAL_AGENTS_BITS'(integer'(lmem_rr_r + i)) % NUM_LSU_BLOCKS;
+                            lmem_owner_r <= AMO_LOCAL_AGENTS_BITS'(integer'(lmem_rr_r + j)) % `NUM_LSU_BLOCKS;
                             break;
                         end
                     end
@@ -115,10 +117,10 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
             end
         end
 
-        for(genvar i = 0; i < NUM_LSU_BLOCKS; ++i) begin : g_local_amo_grant
+        for(genvar i = 0; i < `NUM_LSU_BLOCKS; ++i) begin : g_local_amo_grant
             wire lock_local_grant;
-            assign lock_local_grant = lock_active && (lmem_owner_r == AMO_LOCAL_AGENTS_BITS'(i))
-            assign amo_local_lock_grant[i] = | lock_local_grant
+            assign lock_local_grant = lock_active && (lmem_owner_r == AMO_LOCAL_AGENTS_BITS'(i));
+            assign amo_local_lock_grant[i] = | lock_local_grant;
         end
     end else begin : g_lmem_lock_passthru
         assign amo_local_lock_grant[0] = 1'b1;

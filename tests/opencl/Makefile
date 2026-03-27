@@ -2,6 +2,7 @@ ROOT_DIR := $(realpath ../..)
 include $(ROOT_DIR)/config.mk
 
 all:
+	$(MAKE) -C amo
 	$(MAKE) -C vecadd
 	$(MAKE) -C sgemm
 	$(MAKE) -C conv3
@@ -24,6 +25,7 @@ all:
 	$(MAKE) -C bfs
 
 run-simx:
+	$(MAKE) -C amo run-simx
 	$(MAKE) -C vecadd run-simx
 	$(MAKE) -C sgemm run-simx
 	$(MAKE) -C conv3 run-simx
@@ -45,6 +47,7 @@ run-simx:
 	$(MAKE) -C bfs run-simx
 
 run-rtlsim:
+	$(MAKE) -C amo run-rtlsim
 	$(MAKE) -C vecadd run-rtlsim
 	$(MAKE) -C sgemm run-rtlsim
 	$(MAKE) -C conv3 run-rtlsim
@@ -66,6 +69,7 @@ run-rtlsim:
 	$(MAKE) -C bfs run-rtlsim
 
 clean:
+	$(MAKE) -C amo clean
 	$(MAKE) -C vecadd clean
 	$(MAKE) -C sgemm clean
 	$(MAKE) -C conv3 clean

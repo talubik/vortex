@@ -47,7 +47,9 @@ interface VX_lsu_mem_if import VX_gpu_pkg::*; #(
     /* verilator lint_off UNUSEDSIGNAL */
     logic  req_valid;
     req_data_t req_data;
+    /* verilator lint_off UNOPTFLAT */
     logic  req_ready;
+    /* verilator lint_on UNOPTFLAT */
     /* verilator lint_on UNUSEDSIGNAL */
 
     logic  rsp_valid;

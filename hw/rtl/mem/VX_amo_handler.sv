@@ -30,16 +30,20 @@ module VX_amo_handler import VX_gpu_pkg::*; #(
     // Global AMO lock interface
     output wire                                    amo_lock_req,
     output wire [`CLOG2(`AMO_LOCK_BANKS)-1:0]      amo_lock_bank,
-    input  wire                                    amo_lock_grant
     `ifdef LMEM_ENABLE
+    input  wire                                    amo_lock_grant,
     output wire                                    amo_local_lock_req,
     input  wire                                    amo_local_lock_grant
+    `else
+    input  wire                                    amo_lock_grant
     `endif
 );
 
     localparam DATA_WIDTH = DATA_SIZE * 8;
     localparam LANE_BITS  = `CLOG2(NUM_LANES);
     localparam LANE_WIDTH = (LANE_BITS > 0) ? LANE_BITS : 1;
+    localparam BYTE_BITS  = `CLOG2(DATA_SIZE);
+    localparam BYTE_WIDTH = (BYTE_BITS > 0) ? BYTE_BITS : 1;
 
     localparam [3:0] STATE_IDLE       = 4'd0;
     localparam [3:0] STATE_LOCK       = 4'd1;
@@ -67,6 +71,10 @@ module VX_amo_handler import VX_gpu_pkg::*; #(
 
     // Local-memory atomics bypass global locking
     reg is_local_r;
+`ifdef LMEM_ENABLE
+    reg local_lock_held_r;
+    assign amo_local_lock_req = local_lock_held_r;
+`endif
 
     reg [TAG_WIDTH-1:0]                         req_tag_r;
     reg [NUM_LANES-1:0]                         req_mask_r;
@@ -104,6 +112,27 @@ module VX_amo_handler import VX_gpu_pkg::*; #(
 
     // --- ALU ---
     wire [DATA_WIDTH-1:0] cur_lane_data = req_data_r[lane_idx];
+
+    reg  [DATA_WIDTH-1:0] amo_byteen_mask;
+    reg  [BYTE_WIDTH-1:0] amo_msb_byte;
+    always @(*) begin
+        amo_byteen_mask = '0;
+        amo_msb_byte    = '0;
+        for (integer bb = 0; bb < DATA_SIZE; bb = bb + 1) begin
+            if (req_byteen_r[lane_idx][bb]) begin
+                amo_byteen_mask[bb*8+:8] = 8'hFF;
+                amo_msb_byte = BYTE_WIDTH'(bb);
+            end
+        end
+    end
+
+    wire amo_read_sign = read_data_r[amo_msb_byte * 8 + 7];
+    wire amo_cur_sign  = cur_lane_data[amo_msb_byte * 8 + 7];
+    wire [DATA_WIDTH-1:0] amo_read_sext = (read_data_r  & amo_byteen_mask) | ({DATA_WIDTH{amo_read_sign}} & ~amo_byteen_mask);
+    wire [DATA_WIDTH-1:0] amo_cur_sext  = (cur_lane_data & amo_byteen_mask) | ({DATA_WIDTH{amo_cur_sign}}  & ~amo_byteen_mask);
+    wire [DATA_WIDTH-1:0] amo_read_zext =  read_data_r  & amo_byteen_mask;
+    wire [DATA_WIDTH-1:0] amo_cur_zext  =  cur_lane_data & amo_byteen_mask;
+
     reg [DATA_WIDTH-1:0] alu_result;
 
     always @(*) begin
@@ -113,10 +142,10 @@ module VX_amo_handler import VX_gpu_pkg::*; #(
             INST_LSU_AMO_XOR:  alu_result = read_data_r ^ cur_lane_data;
             INST_LSU_AMO_AND:  alu_result = read_data_r & cur_lane_data;
             INST_LSU_AMO_OR:   alu_result = read_data_r | cur_lane_data;
-            INST_LSU_AMO_MIN:  alu_result = ($signed(read_data_r) < $signed(cur_lane_data)) ? read_data_r : cur_lane_data;
-            INST_LSU_AMO_MAX:  alu_result = ($signed(read_data_r) > $signed(cur_lane_data)) ? read_data_r : cur_lane_data;
-            INST_LSU_AMO_MINU: alu_result = (read_data_r < cur_lane_data) ? read_data_r : cur_lane_data;
-            INST_LSU_AMO_MAXU: alu_result = (read_data_r > cur_lane_data) ? read_data_r : cur_lane_data;
+            INST_LSU_AMO_MIN:  alu_result = ($signed(amo_read_sext) < $signed(amo_cur_sext)) ? read_data_r : cur_lane_data;
+            INST_LSU_AMO_MAX:  alu_result = ($signed(amo_read_sext) > $signed(amo_cur_sext)) ? read_data_r : cur_lane_data;
+            INST_LSU_AMO_MINU: alu_result = (amo_read_zext < amo_cur_zext) ? read_data_r : cur_lane_data;
+            INST_LSU_AMO_MAXU: alu_result = (amo_read_zext > amo_cur_zext) ? read_data_r : cur_lane_data;
             INST_LSU_AMO_SC:   alu_result = cur_lane_data;
             default:           alu_result = read_data_r;
         endcase
@@ -182,6 +211,9 @@ module VX_amo_handler import VX_gpu_pkg::*; #(
             sc_verified_r <= {NUM_LANES{1'b0}};
             skip_read_r <= 1'b0;
             bank_switch_pending <= 1'b0;
+`ifdef LMEM_ENABLE
+            local_lock_held_r <= 1'b0;
+`endif
         end else begin
             state    <= state_n;
             lane_idx <= lane_idx_n;
@@ -217,6 +249,8 @@ module VX_amo_handler import VX_gpu_pkg::*; #(
                         lock_held_r <= 1'b1;
                         req_lock_bank_r <= core_mem_if.req_data.addr[first_lane_w][`CLOG2(`AMO_LOCK_BANKS)-1:0];
             `ifdef LMEM_ENABLE
+                    end else begin
+                        local_lock_held_r <= 1'b1;
                     end
             `endif
                 end
@@ -242,6 +276,11 @@ module VX_amo_handler import VX_gpu_pkg::*; #(
             end
             if (state == STATE_WRITE_RSP && core_mem_if.rsp_ready) begin
                 lock_held_r <= 1'b0;
+`ifdef LMEM_ENABLE
+                if (is_local_r) begin
+                    local_lock_held_r <= 1'b0;
+                end
+`endif
             end
 
             if (state == STATE_WRITE_REQ && next_mem_if.req_ready) begin
@@ -335,7 +374,7 @@ module VX_amo_handler import VX_gpu_pkg::*; #(
                     end else begin
                     `ifdef LMEM_ENABLE
                         if (core_mem_if.req_data.flags[first_lane_w][MEM_REQ_FLAG_LOCAL]) begin
-                            state_n = STATE_DRAIN;
+                            state_n = STATE_LOCAL_LOCK;
                         end else
                     `endif
                         begin
@@ -350,6 +389,19 @@ module VX_amo_handler import VX_gpu_pkg::*; #(
                 core_mem_if.req_ready = 1'b0;
 
                 if (amo_lock_grant) begin
+                    if (!next_pending) begin
+                        state_n = skip_read_r ? STATE_WRITE_REQ : STATE_READ_REQ;
+                    end else begin
+                        state_n = STATE_DRAIN;
+                    end
+                end
+            end
+
+            STATE_LOCAL_LOCK: begin
+                next_mem_if.req_valid = 1'b0;
+                core_mem_if.req_ready = 1'b0;
+
+                if (amo_local_lock_grant) begin
                     if (!next_pending) begin
                         state_n = skip_read_r ? STATE_WRITE_REQ : STATE_READ_REQ;
                     end else begin
@@ -414,7 +466,7 @@ module VX_amo_handler import VX_gpu_pkg::*; #(
                                 state_n = STATE_WRITE_RSP; // all lanes done
                             end else begin
                                 lane_idx_n = next_lane_w;
-                                state_n = is_local_r ? STATE_DRAIN : STATE_LOCK;
+                                state_n = is_local_r ? STATE_LOCAL_LOCK : STATE_LOCK;
                             end
                         end
                     end else begin
@@ -457,7 +509,7 @@ module VX_amo_handler import VX_gpu_pkg::*; #(
                             state_n = STATE_FENCE_REQ;
                         end else begin
                             lane_idx_n = next_lane_w;
-                            state_n = is_local_r ? STATE_DRAIN : STATE_LOCK;
+                            state_n = is_local_r ? STATE_LOCAL_LOCK : STATE_LOCK;
                         end
                     end
                 end
