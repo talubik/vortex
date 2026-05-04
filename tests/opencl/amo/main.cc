@@ -177,6 +177,47 @@ static void test_amo_maxu(int N) {
   clReleaseKernel(k);
 }
 
+static void test_amo_cas(void) {
+  cl_kernel k = CL_CHECK2(clCreateKernel(program, "test_amo_cas", &_err));
+  size_t gws = 1, lws = 1;
+
+  // success: cmp matches current value -> swap happens
+  buf_write(buf,  42);
+  buf_write(buf2, -1);
+  cl_int cmp = 42, desired = 100;
+  CL_CHECK(clSetKernelArg(k, 0, sizeof(cl_mem), &buf));
+  CL_CHECK(clSetKernelArg(k, 1, sizeof(cl_int), &cmp));
+  CL_CHECK(clSetKernelArg(k, 2, sizeof(cl_int), &desired));
+  CL_CHECK(clSetKernelArg(k, 3, sizeof(cl_mem), &buf2));
+  CL_CHECK(clEnqueueNDRangeKernel(queue, k, 1, NULL, &gws, &lws, 0, NULL, NULL));
+  CL_CHECK(clFinish(queue));
+  check("CAS_hit_old",  42, buf_read(buf2)); // returned old value
+  check("CAS_hit_new", 100, buf_read(buf));  // new value written
+
+  // fail: cmp does not match -> no store, returns current value
+  buf_write(buf,  42);
+  buf_write(buf2, -1);
+  cmp = 99;  // intentional mismatch
+  CL_CHECK(clSetKernelArg(k, 1, sizeof(cl_int), &cmp));
+  CL_CHECK(clEnqueueNDRangeKernel(queue, k, 1, NULL, &gws, &lws, 0, NULL, NULL));
+  CL_CHECK(clFinish(queue));
+  check("CAS_miss_old", 42, buf_read(buf2)); // returned current value
+  check("CAS_miss_new", 42, buf_read(buf));  // unchanged
+
+  clReleaseKernel(k);
+}
+
+static void test_local_amo_add(void) {
+  buf_write(buf, -1);
+  cl_kernel k = CL_CHECK2(clCreateKernel(program, "test_local_amo_add", &_err));
+  CL_CHECK(clSetKernelArg(k, 0, sizeof(cl_mem), &buf));
+  size_t gws = 1, lws = 1;
+  CL_CHECK(clEnqueueNDRangeKernel(queue, k, 1, NULL, &gws, &lws, 0, NULL, NULL));
+  CL_CHECK(clFinish(queue));
+  check("LOCAL_ADD", 42, buf_read(buf));
+  clReleaseKernel(k);
+}
+
 
 
 static int num_threads = 16;
@@ -234,6 +275,8 @@ int main(int argc, char **argv) {
   test_amo_max (N);
   test_amo_minu(N);
   test_amo_maxu(N);
+  test_local_amo_add();
+  test_amo_cas();
 
   if (total_errors == 0)
     printf("\nPASSED!\n");

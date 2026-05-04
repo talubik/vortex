@@ -95,11 +95,13 @@ module VX_amo_handler import VX_gpu_pkg::*; #(
     reg [NUM_LANES-1:0][DATA_WIDTH-1:0]         reservation_data;
 
     reg [DATA_WIDTH-1:0]                        last_write_data_r;
-    reg                                         bank_switch_pending;
 
     reg                                         skip_read_r;
 
     wire is_amo = (core_mem_if.req_data.atype[0] != 0) && core_mem_if.req_valid;
+
+    wire bank_switch_needed_w = !is_local_r && !is_last_active_lane(req_mask_r, lane_idx) && 
+                                (req_addr_r[next_lane_w][`CLOG2(`AMO_LOCK_BANKS)-1:0] != req_lock_bank_r);
 
     wire [LANE_WIDTH-1:0] first_lane_w = find_first_lane(core_mem_if.req_data.mask);
 
@@ -210,7 +212,6 @@ module VX_amo_handler import VX_gpu_pkg::*; #(
             is_local_r <= 1'b0;
             sc_verified_r <= {NUM_LANES{1'b0}};
             skip_read_r <= 1'b0;
-            bank_switch_pending <= 1'b0;
 `ifdef LMEM_ENABLE
             local_lock_held_r <= 1'b0;
 `endif
@@ -262,9 +263,8 @@ module VX_amo_handler import VX_gpu_pkg::*; #(
             end
             if (state == STATE_WRITE_REQ && next_mem_if.req_ready && !is_last_active_lane(req_mask_r, lane_idx) && !is_local_r) begin
                 lock_held_r <= 1'b1;
-                if (req_addr_r[next_lane_w][`CLOG2(`AMO_LOCK_BANKS)-1:0] != req_lock_bank_r) begin
-                    req_lock_bank_r <= req_addr_r[next_lane_w][`CLOG2(`AMO_LOCK_BANKS)-1:0];
-                end
+                // DO NOT update req_lock_bank_r here if a bank switch! We must hold the old lock during FENCE.
+                // It will be updated in STATE_FENCE_RSP or STATE_READ_RSP.
             end
             if (state == STATE_READ_RSP && next_mem_if.rsp_valid && is_sc
                 && (next_mem_if.rsp_data.data[0] != reservation_data[lane_idx])
@@ -295,6 +295,9 @@ module VX_amo_handler import VX_gpu_pkg::*; #(
 
             if (skip_read_r
                 && ((state == STATE_LOCK && amo_lock_grant && !next_pending)
+`ifdef LMEM_ENABLE
+                 || (state == STATE_LOCAL_LOCK && amo_local_lock_grant && !next_pending)
+`endif
                  || (state == STATE_DRAIN && !next_pending))) begin
                 read_data_r <= last_write_data_r;
                 lane_result_r[lane_idx] <= last_write_data_r;
@@ -315,12 +318,11 @@ module VX_amo_handler import VX_gpu_pkg::*; #(
                 sc_verified_r[lane_idx] <= (next_mem_if.rsp_data.data[0] == reservation_data[lane_idx]);
             end
 
-            if (state == STATE_FENCE_RSP && next_mem_if.rsp_valid) begin
-                if (bank_switch_pending) begin
+            if (state == STATE_FENCE_RSP && next_mem_if.rsp_valid && next_mem_if.rsp_data.tag == req_tag_r) begin
+                if (!is_last_active_lane(req_mask_r, lane_idx)) begin
                     req_lock_bank_r <= req_addr_r[next_lane_w][`CLOG2(`AMO_LOCK_BANKS)-1:0];
-                    lock_held_r     <= 1'b1; 
+                    lock_held_r     <= 1'b1;
                 end
-                bank_switch_pending <= 1'b0;
             end
             if (state == STATE_WRITE_REQ && next_mem_if.req_ready && !is_sc && !is_lr) begin : amo_invalidate_reservation
                 integer jj;
@@ -328,16 +330,6 @@ module VX_amo_handler import VX_gpu_pkg::*; #(
                     if (reservation_valid[jj] && reservation_addr[jj] == req_addr_r[lane_idx]) begin
                         reservation_valid[jj] <= 1'b0;
                     end
-                end
-            end
-
-            if (state == STATE_WRITE_REQ && next_mem_if.req_ready && !is_last_active_lane(req_mask_r, lane_idx) && !is_local_r) begin
-                // If next lane is in different bank, request a bank-fence before switching
-                if (req_addr_r[next_lane_w][`CLOG2(`AMO_LOCK_BANKS)-1:0] != req_lock_bank_r) begin
-                    bank_switch_pending <= 1'b1;
-                end else begin
-                    lock_held_r <= 1'b1;
-                    req_lock_bank_r <= req_addr_r[next_lane_w][`CLOG2(`AMO_LOCK_BANKS)-1:0];
                 end
             end
         end
@@ -451,11 +443,12 @@ module VX_amo_handler import VX_gpu_pkg::*; #(
 
             STATE_READ_RSP: begin
                 next_mem_if.req_valid = 1'b0;
-                next_mem_if.rsp_ready = 1'b1;
                 core_mem_if.req_ready = 1'b0;
-                core_mem_if.rsp_valid = 1'b0;
 
-                if (next_mem_if.rsp_valid) begin
+                if (next_mem_if.rsp_valid && next_mem_if.rsp_data.tag == req_tag_r) begin
+                    // Our AMO read response: consume it, do not forward to core.
+                    next_mem_if.rsp_ready = 1'b1;
+                    core_mem_if.rsp_valid = 1'b0;
                     if (is_lr) begin
                         state_n = STATE_WRITE_RSP;
                     end else if (is_sc) begin
@@ -472,6 +465,11 @@ module VX_amo_handler import VX_gpu_pkg::*; #(
                     end else begin
                         state_n = STATE_WRITE_REQ;
                     end
+                end else begin
+                    // Stale response from a non-AMO request: pass through to core.
+                    core_mem_if.rsp_valid = next_mem_if.rsp_valid;
+                    core_mem_if.rsp_data  = next_mem_if.rsp_data;
+                    next_mem_if.rsp_ready = core_mem_if.rsp_ready;
                 end
             end
 
@@ -504,7 +502,7 @@ module VX_amo_handler import VX_gpu_pkg::*; #(
                     if (is_last_active_lane(req_mask_r, lane_idx)) begin
                         state_n = (is_local_r || is_lr) ? STATE_WRITE_RSP : STATE_FENCE_REQ;
                     end else begin
-                        if (bank_switch_pending && !is_local_r) begin
+                        if (bank_switch_needed_w) begin
                             lane_idx_n = lane_idx; 
                             state_n = STATE_FENCE_REQ;
                         end else begin
@@ -540,17 +538,23 @@ module VX_amo_handler import VX_gpu_pkg::*; #(
 
             STATE_FENCE_RSP: begin
                 next_mem_if.req_valid = 1'b0;
-                next_mem_if.rsp_ready = 1'b1;
                 core_mem_if.req_ready = 1'b0;
-                core_mem_if.rsp_valid = 1'b0;
 
-                if (next_mem_if.rsp_valid) begin
-                    if (bank_switch_pending) begin
+                if (next_mem_if.rsp_valid && next_mem_if.rsp_data.tag == req_tag_r) begin
+                    // Our AMO fence response: consume it, do not forward to core.
+                    next_mem_if.rsp_ready = 1'b1;
+                    core_mem_if.rsp_valid = 1'b0;
+                    if (!is_last_active_lane(req_mask_r, lane_idx)) begin
                         lane_idx_n = next_lane_w;
                         state_n = STATE_LOCK;
                     end else begin
                         state_n = STATE_WRITE_RSP;
                     end
+                end else begin
+                    // Stale response from a non-AMO request: pass through to core.
+                    core_mem_if.rsp_valid = next_mem_if.rsp_valid;
+                    core_mem_if.rsp_data  = next_mem_if.rsp_data;
+                    next_mem_if.rsp_ready = core_mem_if.rsp_ready;
                 end
             end
 
@@ -599,6 +603,9 @@ module VX_amo_handler import VX_gpu_pkg::*; #(
         end
         if (skip_read_r
             && ((state == STATE_LOCK && amo_lock_grant && !next_pending)
+`ifdef LMEM_ENABLE
+             || (state == STATE_LOCAL_LOCK && amo_local_lock_grant && !next_pending)
+`endif
              || (state == STATE_DRAIN && !next_pending))) begin
             `TRACE(2, ("%t: AMO-HANDLER: FORWARDING lane=%0d, data=0x%0h (skip read)\n", $time, lane_idx, last_write_data_r))
         end
