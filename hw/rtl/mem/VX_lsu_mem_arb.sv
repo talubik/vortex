@@ -35,7 +35,8 @@ module VX_lsu_mem_arb import VX_gpu_pkg::*; #(
 );
     localparam DATA_WIDTH   = (8 * DATA_SIZE);
     localparam LOG_NUM_REQS = `ARB_SEL_BITS(NUM_INPUTS, NUM_OUTPUTS);
-    localparam REQ_DATAW    = 1 + NUM_LANES * (1 + 5 + ADDR_WIDTH + DATA_WIDTH + DATA_SIZE + FLAGS_WIDTH) + TAG_WIDTH;
+    localparam PID_WIDTH    = 1;
+    localparam REQ_DATAW    = 1 + NUM_LANES * (1 + 5 + ADDR_WIDTH + DATA_WIDTH + DATA_SIZE + FLAGS_WIDTH) + NW_WIDTH + PID_WIDTH + TAG_WIDTH;
     localparam RSP_DATAW    = NUM_LANES * (1 + DATA_WIDTH) + TAG_WIDTH;
 
     //`STATIC_ASSERT ((NUM_INPUTS >= NUM_OUTPUTS), ("invalid parameter: NUM_INPUTS=%0d, NUM_OUTPUTS=%0d", NUM_INPUTS, NUM_OUTPUTS));
@@ -84,6 +85,8 @@ module VX_lsu_mem_arb import VX_gpu_pkg::*; #(
             bus_out_if[i].req_data.data,
             bus_out_if[i].req_data.byteen,
             bus_out_if[i].req_data.flags,
+            bus_out_if[i].req_data.wid,
+            bus_out_if[i].req_data.pid,
             req_tag_out
         } = req_data_out[i];
         assign req_ready_out[i] = bus_out_if[i].req_ready;

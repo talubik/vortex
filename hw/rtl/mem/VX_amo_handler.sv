@@ -44,6 +44,12 @@ module VX_amo_handler import VX_gpu_pkg::*; #(
     localparam LANE_WIDTH = (LANE_BITS > 0) ? LANE_BITS : 1;
     localparam BYTE_BITS  = `CLOG2(DATA_SIZE);
     localparam BYTE_WIDTH = (BYTE_BITS > 0) ? BYTE_BITS : 1;
+    // Reservation set is per-hart: one entry per (warp, thread) pair in the core.
+    // hart_id = wid * NUM_THREADS + pid * NUM_LANES + lane_idx
+    localparam NUM_HARTS  = `NUM_WARPS * `NUM_THREADS;
+    localparam HART_BITS  = `CLOG2(NUM_HARTS);
+    localparam HART_WIDTH = (HART_BITS > 0) ? HART_BITS : 1;
+    localparam PID_W      = `UP(`CLOG2(`NUM_THREADS / NUM_LANES));
 
     localparam [3:0] STATE_IDLE       = 4'd0;
     localparam [3:0] STATE_LOCK       = 4'd1;
@@ -90,9 +96,24 @@ module VX_amo_handler import VX_gpu_pkg::*; #(
 
     reg [LANE_WIDTH-1:0]                         lane_idx, lane_idx_n;
 
-    reg [NUM_LANES-1:0]                         reservation_valid;
-    reg [NUM_LANES-1:0][ADDR_WIDTH-1:0]         reservation_addr;
-    reg [NUM_LANES-1:0][DATA_WIDTH-1:0]         reservation_data;
+    // Reservation set indexed by hart_id (covers all warps × threads in this core).
+    reg [NUM_HARTS-1:0]                         reservation_valid;
+    reg [NUM_HARTS-1:0][ADDR_WIDTH-1:0]         reservation_addr;
+    reg [NUM_HARTS-1:0][DATA_WIDTH-1:0]         reservation_data;
+
+    // Captured wid/pid for the AMO currently in flight.
+    reg [NW_WIDTH-1:0]                          req_wid_r;
+    reg [PID_W-1:0]                             req_pid_r;
+
+    // Compute hart_id for a given lane within the current AMO.
+    function automatic [HART_WIDTH-1:0] hart_id_of;
+        input [LANE_WIDTH-1:0] lane;
+        begin
+            hart_id_of = HART_WIDTH'(req_wid_r) * HART_WIDTH'(`NUM_THREADS)
+                       + HART_WIDTH'(req_pid_r) * HART_WIDTH'(NUM_LANES)
+                       + HART_WIDTH'(lane);
+        end
+    endfunction
 
     reg [DATA_WIDTH-1:0]                        last_write_data_r;
 
@@ -205,7 +226,7 @@ module VX_amo_handler import VX_gpu_pkg::*; #(
     always @(posedge clk) begin
         if (reset) begin
             state <= STATE_IDLE;
-            reservation_valid <= {NUM_LANES{1'b0}};
+            reservation_valid <= {NUM_HARTS{1'b0}};
             lane_idx <= '0;
             lock_held_r <= 1'b0;
             req_lock_bank_r <= '0;
@@ -225,6 +246,8 @@ module VX_amo_handler import VX_gpu_pkg::*; #(
                 req_tag_r   <= core_mem_if.req_data.tag;
                 req_mask_r  <= core_mem_if.req_data.mask;
                 req_op_r    <= core_mem_if.req_data.atype[0];
+                req_wid_r   <= core_mem_if.req_data.wid;
+                req_pid_r   <= core_mem_if.req_data.pid;
                 skip_read_r <= 1'b0;
 
                 for (ii = 0; ii < NUM_LANES; ii = ii + 1) begin
@@ -240,25 +263,25 @@ module VX_amo_handler import VX_gpu_pkg::*; #(
             `endif
 
 
-                if (!(core_mem_if.req_data.atype[0] == INST_LSU_AMO_SC
-                      && !(reservation_valid[first_lane_w]
-                           && (reservation_addr[first_lane_w]
-                               == core_mem_if.req_data.addr[first_lane_w])))) begin
+                // Capture lock unconditionally for every AMO (including SC).
+                // SC's per-lane reservation check happens later in STATE_READ_RSP
+                // since reservations are per-lane, not per-request.
             `ifdef LMEM_ENABLE
-                    if (!core_mem_if.req_data.flags[first_lane_w][MEM_REQ_FLAG_LOCAL]) begin
+                if (!core_mem_if.req_data.flags[first_lane_w][MEM_REQ_FLAG_LOCAL]) begin
             `endif
-                        lock_held_r <= 1'b1;
-                        req_lock_bank_r <= core_mem_if.req_data.addr[first_lane_w][`CLOG2(`AMO_LOCK_BANKS)-1:0];
+                    lock_held_r <= 1'b1;
+                    req_lock_bank_r <= core_mem_if.req_data.addr[first_lane_w][`CLOG2(`AMO_LOCK_BANKS)-1:0];
             `ifdef LMEM_ENABLE
-                    end else begin
-                        local_lock_held_r <= 1'b1;
-                    end
-            `endif
+                end else begin
+                    local_lock_held_r <= 1'b1;
                 end
+            `endif
 
                 if (core_mem_if.req_data.atype[0] == INST_LSU_AMO_SC) begin
-                    reservation_valid <= {NUM_LANES{1'b0}};
-                    sc_verified_r     <= {NUM_LANES{1'b0}};
+                    // Reset sc_verified_r for this transaction; reservation_valid
+                    // is preserved (SC must consume its own valid reservation,
+                    // not destroy others).
+                    sc_verified_r <= {NUM_LANES{1'b0}};
                 end
             end
             if (state == STATE_WRITE_REQ && next_mem_if.req_ready && !is_last_active_lane(req_mask_r, lane_idx) && !is_local_r) begin
@@ -266,8 +289,11 @@ module VX_amo_handler import VX_gpu_pkg::*; #(
                 // DO NOT update req_lock_bank_r here if a bank switch! We must hold the old lock during FENCE.
                 // It will be updated in STATE_FENCE_RSP or STATE_READ_RSP.
             end
-            if (state == STATE_READ_RSP && next_mem_if.rsp_valid && is_sc
-                && (next_mem_if.rsp_data.data[0] != reservation_data[lane_idx])
+            if (state == STATE_READ_RSP && next_mem_if.rsp_valid
+                && next_mem_if.rsp_data.tag == req_tag_r && is_sc
+                && !(reservation_valid[hart_id_of(lane_idx)]
+                     && (reservation_addr[hart_id_of(lane_idx)] == req_addr_r[lane_idx])
+                     && (next_mem_if.rsp_data.data[0] == reservation_data[hart_id_of(lane_idx)]))
                 && !is_last_active_lane(req_mask_r, lane_idx) && !is_local_r) begin
                 lock_held_r <= 1'b1;
                 if (req_addr_r[next_lane_w][`CLOG2(`AMO_LOCK_BANKS)-1:0] != req_lock_bank_r) begin
@@ -308,14 +334,20 @@ module VX_amo_handler import VX_gpu_pkg::*; #(
                 lane_result_r[lane_idx] <= next_mem_if.rsp_data.data[0];
             end
 
-            if (state == STATE_READ_RSP && next_mem_if.rsp_valid && is_lr) begin
-                reservation_valid[lane_idx] <= 1'b1;
-                reservation_addr[lane_idx]  <= req_addr_r[lane_idx];
-                reservation_data[lane_idx]  <= next_mem_if.rsp_data.data[0];
+            if (state == STATE_READ_RSP && next_mem_if.rsp_valid && is_lr
+                && next_mem_if.rsp_data.tag == req_tag_r) begin
+                reservation_valid[hart_id_of(lane_idx)] <= 1'b1;
+                reservation_addr [hart_id_of(lane_idx)] <= req_addr_r[lane_idx];
+                reservation_data [hart_id_of(lane_idx)] <= next_mem_if.rsp_data.data[0];
             end
 
-            if (state == STATE_READ_RSP && next_mem_if.rsp_valid && is_sc) begin
-                sc_verified_r[lane_idx] <= (next_mem_if.rsp_data.data[0] == reservation_data[lane_idx]);
+            if (state == STATE_READ_RSP && next_mem_if.rsp_valid && is_sc
+                && next_mem_if.rsp_data.tag == req_tag_r) begin
+                sc_verified_r[lane_idx] <= reservation_valid[hart_id_of(lane_idx)]
+                                        && (reservation_addr[hart_id_of(lane_idx)] == req_addr_r[lane_idx])
+                                        && (next_mem_if.rsp_data.data[0] == reservation_data[hart_id_of(lane_idx)]);
+                // SC consumes its own reservation regardless of success/failure.
+                reservation_valid[hart_id_of(lane_idx)] <= 1'b0;
             end
 
             if (state == STATE_FENCE_RSP && next_mem_if.rsp_valid && next_mem_if.rsp_data.tag == req_tag_r) begin
@@ -324,9 +356,12 @@ module VX_amo_handler import VX_gpu_pkg::*; #(
                     lock_held_r     <= 1'b1;
                 end
             end
-            if (state == STATE_WRITE_REQ && next_mem_if.req_ready && !is_sc && !is_lr) begin : amo_invalidate_reservation
+            if (state == STATE_WRITE_REQ && next_mem_if.req_ready && !is_lr) begin : amo_invalidate_reservation
+                // Any successful write (AMO or SC) invalidates all reservations
+                // matching the written address across all harts in this core,
+                // per RISC-V A-extension semantics.
                 integer jj;
-                for (jj = 0; jj < NUM_LANES; jj = jj + 1) begin
+                for (jj = 0; jj < NUM_HARTS; jj = jj + 1) begin
                     if (reservation_valid[jj] && reservation_addr[jj] == req_addr_r[lane_idx]) begin
                         reservation_valid[jj] <= 1'b0;
                     end
@@ -358,20 +393,16 @@ module VX_amo_handler import VX_gpu_pkg::*; #(
 
                     lane_idx_n = first_lane_w;
 
-                    if (core_mem_if.req_data.atype[0] == INST_LSU_AMO_SC
-                        && !(reservation_valid[first_lane_w]
-                             && (reservation_addr[first_lane_w]
-                                 == core_mem_if.req_data.addr[first_lane_w]))) begin
-                        state_n = STATE_WRITE_RSP;
-                    end else begin
-                    `ifdef LMEM_ENABLE
-                        if (core_mem_if.req_data.flags[first_lane_w][MEM_REQ_FLAG_LOCAL]) begin
-                            state_n = STATE_LOCAL_LOCK;
-                        end else
-                    `endif
-                        begin
-                            state_n = STATE_LOCK;
-                        end
+                    // Always go through STATE_LOCK / STATE_LOCAL_LOCK, even for SC.
+                    // SC's per-lane reservation check is done in STATE_READ_RSP
+                    // (each lane has its own reservation_valid/addr).
+                `ifdef LMEM_ENABLE
+                    if (core_mem_if.req_data.flags[first_lane_w][MEM_REQ_FLAG_LOCAL]) begin
+                        state_n = STATE_LOCAL_LOCK;
+                    end else
+                `endif
+                    begin
+                        state_n = STATE_LOCK;
                     end
                 end
             end
@@ -452,11 +483,16 @@ module VX_amo_handler import VX_gpu_pkg::*; #(
                     if (is_lr) begin
                         state_n = STATE_WRITE_RSP;
                     end else if (is_sc) begin
-                        if (next_mem_if.rsp_data.data[0] == reservation_data[lane_idx]) begin
-                            state_n = STATE_WRITE_REQ; // data matches, proceed to write
+                        // SC succeeds only if this lane has a valid reservation
+                        // for this address AND memory data is unchanged since LR.
+                        if (reservation_valid[hart_id_of(lane_idx)]
+                            && (reservation_addr[hart_id_of(lane_idx)] == req_addr_r[lane_idx])
+                            && (next_mem_if.rsp_data.data[0] == reservation_data[hart_id_of(lane_idx)])) begin
+                            state_n = STATE_WRITE_REQ; // proceed to write
                         end else begin
+                            // SC failed: skip write, move to next lane or finish.
                             if (is_last_active_lane(req_mask_r, lane_idx)) begin
-                                state_n = STATE_WRITE_RSP; // all lanes done
+                                state_n = STATE_WRITE_RSP;
                             end else begin
                                 lane_idx_n = next_lane_w;
                                 state_n = is_local_r ? STATE_LOCAL_LOCK : STATE_LOCK;

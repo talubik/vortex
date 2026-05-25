@@ -18,6 +18,7 @@ interface VX_lsu_mem_if import VX_gpu_pkg::*; #(
     parameter DATA_SIZE  = 1,
     parameter TAG_WIDTH  = 1,
     parameter FLAGS_WIDTH = MEM_FLAGS_WIDTH,
+    parameter PID_WIDTH = 1,
     parameter MEM_ADDR_WIDTH = `MEM_ADDR_WIDTH,
     parameter ADDR_WIDTH = MEM_ADDR_WIDTH - `CLOG2(DATA_SIZE)
 ) ();
@@ -35,6 +36,11 @@ interface VX_lsu_mem_if import VX_gpu_pkg::*; #(
         logic [NUM_LANES-1:0][DATA_SIZE*8-1:0] data;
         logic [NUM_LANES-1:0][DATA_SIZE-1:0]   byteen;
         logic [NUM_LANES-1:0][FLAGS_WIDTH-1:0] flags;
+        // hart-identification fields (per request, not per lane).
+        // Used by the AMO handler to track LR/SC reservations per hart so that
+        // distinct warps / packets don't clobber each other's reservation.
+        logic [NW_WIDTH-1:0]                   wid;
+        logic [PID_WIDTH-1:0]                  pid;
         tag_t                                  tag;
     } req_data_t;
 

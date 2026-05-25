@@ -71,7 +71,15 @@ module VX_lsu_slice import VX_gpu_pkg::*; #(
 
     // address type calculation
 
-    wire [NUM_LANES-1:0][MEM_FLAGS_WIDTH+4:0] mem_req_flags;
+    // Layout of mem_req_flags[i]:
+    //   [MEM_FLAGS_WIDTH-1:0]                              : base flags
+    //   [MEM_FLAGS_WIDTH+4:MEM_FLAGS_WIDTH]                : atype (5 bits)
+    //   [MEM_FLAGS_WIDTH+4+NW_WIDTH:MEM_FLAGS_WIDTH+5]     : wid (NW_WIDTH bits)
+    //   [MEM_FLAGS_WIDTH+4+NW_WIDTH+PID_WIDTH:MEM_FLAGS_WIDTH+5+NW_WIDTH] : pid (PID_WIDTH bits)
+    // wid/pid are carried per-lane (replicated) so they survive the mem_scheduler
+    // queue and reach the AMO handler for hart-id reservation tracking.
+    localparam MEM_REQ_FLAGS_WIDTH = MEM_FLAGS_WIDTH + 5 + NW_WIDTH + PID_WIDTH;
+    wire [NUM_LANES-1:0][MEM_REQ_FLAGS_WIDTH-1:0] mem_req_flags;
     for (genvar i = 0; i < NUM_LANES; ++i) begin : g_mem_req_flags
         wire [MEM_ADDRW-1:0] block_addr = full_addr[i][MEM_ASHIFT +: MEM_ADDRW];
         // is I/O address
@@ -80,6 +88,8 @@ module VX_lsu_slice import VX_gpu_pkg::*; #(
         assign mem_req_flags[i][MEM_REQ_FLAG_FLUSH] = req_is_fence;
         assign mem_req_flags[i][MEM_REQ_FLAG_IO] = ((block_addr >= io_addr_start) && (block_addr < io_addr_end)) || req_is_amo;
         assign mem_req_flags[i][MEM_FLAGS_WIDTH+4:MEM_FLAGS_WIDTH] = req_is_amo ? 5'(execute_if.data.op_type) : 5'd0;
+        assign mem_req_flags[i][MEM_FLAGS_WIDTH+4+NW_WIDTH:MEM_FLAGS_WIDTH+5] = execute_if.data.wid;
+        assign mem_req_flags[i][MEM_FLAGS_WIDTH+4+NW_WIDTH+PID_WIDTH:MEM_FLAGS_WIDTH+5+NW_WIDTH] = execute_if.data.pid;
     `ifdef LMEM_ENABLE
         // is local memory address
         wire [MEM_ADDRW-1:0] lmem_addr_start = MEM_ADDRW'(`XLEN'(`LMEM_BASE_ADDR) >> MEM_ASHIFT);
@@ -312,7 +322,7 @@ module VX_lsu_slice import VX_gpu_pkg::*; #(
     wire [NUM_LANES-1:0]                    lsu_mem_req_mask;
     wire [NUM_LANES-1:0][LSU_WORD_SIZE-1:0] lsu_mem_req_byteen;
     wire [NUM_LANES-1:0][LSU_ADDR_WIDTH-1:0] lsu_mem_req_addr;
-    wire [NUM_LANES-1:0][MEM_FLAGS_WIDTH+4:0] lsu_mem_req_flags;
+    wire [NUM_LANES-1:0][MEM_REQ_FLAGS_WIDTH-1:0] lsu_mem_req_flags;
     wire [NUM_LANES-1:0][(LSU_WORD_SIZE*8)-1:0] lsu_mem_req_data;
     wire [LSU_TAG_WIDTH-1:0]                lsu_mem_req_tag;
     wire                                    lsu_mem_req_ready;
@@ -330,7 +340,7 @@ module VX_lsu_slice import VX_gpu_pkg::*; #(
         .WORD_SIZE   (LSU_WORD_SIZE),
         .LINE_SIZE   (LSU_WORD_SIZE),
         .ADDR_WIDTH  (LSU_ADDR_WIDTH),
-        .FLAGS_WIDTH (MEM_FLAGS_WIDTH+5),
+        .FLAGS_WIDTH (MEM_REQ_FLAGS_WIDTH),
         .TAG_WIDTH   (TAG_WIDTH),
         .CORE_QUEUE_SIZE (`LSUQ_IN_SIZE),
         .MEM_QUEUE_SIZE (`LSUQ_OUT_SIZE),
@@ -395,6 +405,11 @@ module VX_lsu_slice import VX_gpu_pkg::*; #(
         assign lsu_mem_if.req_data.flags[i] = lsu_mem_req_flags[i][MEM_FLAGS_WIDTH-1:0];
         assign lsu_mem_if.req_data.atype[i] = lsu_mem_req_flags[i][MEM_FLAGS_WIDTH+4:MEM_FLAGS_WIDTH];
     end
+
+    // wid/pid are replicated across lanes — take them from lane 0 (they are
+    // identical per-request).
+    assign lsu_mem_if.req_data.wid = lsu_mem_req_flags[0][MEM_FLAGS_WIDTH+4+NW_WIDTH:MEM_FLAGS_WIDTH+5];
+    assign lsu_mem_if.req_data.pid = lsu_mem_req_flags[0][MEM_FLAGS_WIDTH+4+NW_WIDTH+PID_WIDTH:MEM_FLAGS_WIDTH+5+NW_WIDTH];
 
     assign lsu_mem_if.req_data.data = lsu_mem_req_data;
     assign lsu_mem_if.req_data.tag = lsu_mem_req_tag;

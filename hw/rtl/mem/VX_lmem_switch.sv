@@ -25,7 +25,8 @@ module VX_lmem_switch import VX_gpu_pkg::*; #(
     VX_lsu_mem_if.master    global_out_if,
     VX_lsu_mem_if.master    local_out_if
 );
-    localparam REQ_DATAW = `NUM_LSU_LANES + 1 + `NUM_LSU_LANES * (5 + LSU_WORD_SIZE + LSU_ADDR_WIDTH + MEM_FLAGS_WIDTH + LSU_WORD_SIZE * 8) + LSU_TAG_WIDTH;
+    localparam PID_WIDTH = 1;
+    localparam REQ_DATAW = `NUM_LSU_LANES + 1 + `NUM_LSU_LANES * (5 + LSU_WORD_SIZE + LSU_ADDR_WIDTH + MEM_FLAGS_WIDTH + LSU_WORD_SIZE * 8) + NW_WIDTH + PID_WIDTH + LSU_TAG_WIDTH;
     localparam RSP_DATAW = `NUM_LSU_LANES + `NUM_LSU_LANES * (LSU_WORD_SIZE * 8) + LSU_TAG_WIDTH;
 
     wire [`NUM_LSU_LANES-1:0] is_addr_local_mask;
@@ -58,6 +59,8 @@ module VX_lmem_switch import VX_gpu_pkg::*; #(
             lsu_in_if.req_data.data,
             lsu_in_if.req_data.byteen,
             lsu_in_if.req_data.flags,
+            lsu_in_if.req_data.wid,
+            lsu_in_if.req_data.pid,
             lsu_in_if.req_data.tag
         }),
         .ready_in  (req_global_ready),
@@ -82,6 +85,8 @@ module VX_lmem_switch import VX_gpu_pkg::*; #(
             lsu_in_if.req_data.data,
             lsu_in_if.req_data.byteen,
             lsu_in_if.req_data.flags,
+            lsu_in_if.req_data.wid,
+            lsu_in_if.req_data.pid,
             lsu_in_if.req_data.tag
         }),
         .ready_in  (req_local_ready),
